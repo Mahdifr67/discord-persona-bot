@@ -84,6 +84,16 @@ npm start
 ## ☁️ Deploy to Railway
 
 1. Push this folder to a GitHub repo
+```bash
+# I. Link your local folder to your new repo
+git remote add origin https://github.com/yourusername/yourrepo.git
+
+# II. Rename the branch to main (standard for GitHub)
+git branch -M main
+
+# III. Push the code
+git push -u origin main
+```
 2. [railway.app](https://railway.app) → **New Project** → **Deploy from GitHub**
 3. Select your repo
 4. Go to **Variables** and add:
