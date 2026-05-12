@@ -20,7 +20,7 @@ A Discord bot powered by **Google Gemini** with a fully customizable persona, au
 ---
 
 ## 📁 Structure
-
+(This will be assigned automatically. Do not add them manually)
 ```
 discord-persona-bot/
 ├── bot.js              Main bot
