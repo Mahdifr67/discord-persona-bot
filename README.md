@@ -126,6 +126,7 @@ Railway auto-deploys on every push. The `data/` folder is ephemeral on Railway (
 | `!logs search <keyword>` | Search chat log by keyword |
 | `!ask <question>` | Ask AI a question about this channel's history |
 | `!memory add <userId> <fact>` | Add a fact about a specific user |
+| `!memory remove <scope> <index>` | Delete a memory by index |
 | `!clear` | Clear conversation memory (logs kept) |
 | `!persona` | Show current persona info |
 | `!help` | List all commands |
@@ -139,7 +140,6 @@ Railway auto-deploys on every push. The `data/` folder is ephemeral on Railway (
 | `!auth remove <@user or ID>` | Remove authorization |
 | `!auth list` | List all authorized users |
 | `!memory add global <fact>` | Add a fact known about everyone |
-| `!memory remove <scope> <index>` | Delete a memory by index |
 | `!memory list` | List all memory scopes |
 | `!memory list <scope>` | List entries in a scope |
 
