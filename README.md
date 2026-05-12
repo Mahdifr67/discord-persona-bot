@@ -46,6 +46,7 @@ discord-persona-bot/
 3. Enable **MESSAGE CONTENT INTENT** under Privileged Gateway Intents
 4. **OAuth2 > URL Generator** → scope `bot` → permissions: `Send Messages`, `Read Message History`, `View Channels`, `Attach Files`
 5. Invite the bot to your server
+6. Add profile image from bot section (Optional)
 
 ### 2. Gemini API Key
 
@@ -63,8 +64,15 @@ cp .env.example .env
 # Fill in DISCORD_TOKEN, GEMINI_API_KEY, OWNER_ID
 # Optionally add AUTHORIZED_USERS=id1,id2,id3
 ```
+### 5. Download Nodejs
 
-### 5. Run locally
+Download nodejs from [Here](https://nodejs.org/en). For npm commands.
+
+### 6. Download Git
+
+Download Git from [Here](https://git-scm.com/). For Git commands.
+
+### 7. Run locally
 
 ```bash
 npm install
