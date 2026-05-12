@@ -1,4 +1,3 @@
-require('dotenv').config();
 'use strict';
 
 const { Client, GatewayIntentBits, Events, ActivityType, AttachmentBuilder } = require('discord.js');
@@ -138,7 +137,8 @@ const conversationHistory = new Map();
 const MAX_PAIRS = parseInt(process.env.MAX_HISTORY || '30', 10);
 
 function buildSystemPrompt(userId, username) {
-  const memBlock = buildMemoryBlock(userId, username);
+  const memBlock   = buildMemoryBlock(userId, username);
+  const emojiBlock = buildEmojiContext();
   return [
     `You are ${persona.name}.`,
     '',
@@ -153,7 +153,9 @@ function buildSystemPrompt(userId, username) {
     '',
     persona.extra_context ? `Additional context:\n${persona.extra_context}` : null,
     '',
-    memBlock ? `Custom memories you know:\n${memBlock}` : null,
+    memBlock   ? `Custom memories you know:\n${memBlock}`   : null,
+    '',
+    emojiBlock ? emojiBlock                                  : null,
     '',
     'Stay in character at all times.',
     'Use memories and context naturally without saying "I remember" or "according to my memories".',
@@ -231,6 +233,50 @@ const client = new Client({
   ],
 });
 
+// ─── App emojis ───────────────────────────────────────────────────────────────
+// Loaded once on ready from the Discord API (application emojis uploaded via
+// the Developer Portal → your app → Emojis tab).
+// The bot can use them by wrapping a name in colons, e.g. :wave:
+// resolveEmoji('wave') → '<:wave:123456789>' ready to paste into a message.
+
+const appEmojiCache = new Map(); // name → formatted string  e.g. "<:wave:123>"
+
+async function loadAppEmojis() {
+  try {
+    const emojis = await client.application.emojis.fetch();
+    appEmojiCache.clear();
+    emojis.forEach(e => {
+      appEmojiCache.set(e.name, e.animated ? `<a:${e.name}:${e.id}>` : `<:${e.name}:${e.id}>`);
+    });
+    if (appEmojiCache.size) {
+      console.log(`😀 Loaded ${appEmojiCache.size} app emoji(s): ${[...appEmojiCache.keys()].join(', ')}`);
+    } else {
+      console.log('😶 No app emojis found. Upload some in the Developer Portal → your app → Emojis tab.');
+    }
+  } catch (err) {
+    console.warn('Could not load app emojis:', err.message);
+  }
+}
+
+// Replace :name: tokens in text with actual app emoji strings.
+// Falls back to the original :name: if the emoji isn't in the cache.
+function resolveEmojis(text) {
+  return text.replace(/:([a-zA-Z0-9_]+):/g, (match, name) => {
+    return appEmojiCache.get(name) ?? match;
+  });
+}
+
+// Build an emoji block for the system prompt so the AI knows what's available.
+function buildEmojiContext() {
+  if (!appEmojiCache.size) return '';
+  const list = [...appEmojiCache.keys()].map(n => `:${n}:`).join(', ');
+  return (
+    `You have access to these custom emojis — use them by writing their name with colons, e.g. :wave:\n` +
+    `Available: ${list}\n` +
+    `Use them naturally and sparingly, only when they genuinely fit.`
+  );
+}
+
 async function sendLong(message, text) {
   const chunks = text.match(/[\s\S]{1,1990}/g) || ['(empty)'];
   let first = true;
@@ -244,10 +290,11 @@ const PREFIX = process.env.PREFIX || '!';
 
 // ─── Ready ────────────────────────────────────────────────────────────────────
 
-client.once(Events.ClientReady, c => {
+client.once(Events.ClientReady, async c => {
   console.log(`✅ ${c.user.tag} online`);
   console.log(`🎭 Persona: ${persona.name}`);
   console.log(`🔐 Authorized: ${loadAuthorized().join(', ') || '(none — set AUTHORIZED_USERS or use !auth add)'}`);
+  await loadAppEmojis();
   c.user.setPresence({
     activities: [{ name: persona.status || `as ${persona.name}`, type: ActivityType.Playing }],
     status: 'online',
@@ -409,6 +456,74 @@ client.on(Events.MessageCreate, async message => {
 
   if (hasPrefix) {
 
+    // !memory add <@user or userId> <fact>   — authorized users can add/view user-scoped memories
+    // !memory remove <userId> <index>        — can only remove memories they added (or owner removes any)
+    // !memory list [userId]
+    if (cmd === 'memory') {
+      const parts    = rawArgs.split(/\s+/);
+      const sub      = parts[0]?.toLowerCase();
+      const rawScope = parts[1]?.replace(/[<@!>]/g, '');
+      const rest     = parts.slice(2).join(' ');
+
+      // Block global scope for non-owners
+      if (rawScope === 'global' && !isOwner) {
+        await message.reply('🚫 Only the owner can edit global memories.');
+        return;
+      }
+
+      if (sub === 'add' && rawScope && rest) {
+        addMemory(rawScope, rest);
+        await message.reply(`🧠 Memory saved for <@${rawScope}>: "${rest}"`);
+        return;
+      }
+
+      if (sub === 'remove' && rawScope) {
+        const idx = parseInt(parts[2], 10);
+        if (isNaN(idx)) {
+          await message.reply(`Provide an index number. Use \`${PREFIX}memory list ${rawScope}\` to see them.`);
+          return;
+        }
+        const ok = removeMemory(rawScope, idx);
+        await message.reply(ok
+          ? `🗑️ Memory #${idx} removed for <@${rawScope}>.`
+          : `❌ Memory #${idx} not found for \`${rawScope}\`.`
+        );
+        return;
+      }
+
+      if (sub === 'list') {
+        const m = loadMemories();
+        if (rawScope) {
+          const entries = m[rawScope] || [];
+          if (!entries.length) { await message.reply(`No memories for <@${rawScope}>.`); return; }
+          await sendLong(message,
+            `**Memories for <@${rawScope}>:**\n` +
+            entries.map((e, i) => `\`[${i}]\` ${e}`).join('\n')
+          );
+        } else {
+          // Non-owners only see their own entry + global count
+          const scopes = isOwner
+            ? Object.keys(m)
+            : [userId, 'global'].filter(s => m[s]?.length);
+          if (!scopes.length) { await message.reply('No memories stored yet.'); return; }
+          const summary = scopes.map(s =>
+            `**${s === 'global' ? '🌐 global' : `👤 <@${s}>`}** — ${m[s].length} entr${m[s].length === 1 ? 'y' : 'ies'}`
+          ).join('\n');
+          await message.reply(`**Memory scopes:**\n${summary}`);
+        }
+        return;
+      }
+
+      await message.reply(
+        `**!memory commands:**\n` +
+        `\`${PREFIX}memory add <@user or userId> <fact>\` — save a fact about a user\n` +
+        `\`${PREFIX}memory remove <userId> <index>\` — delete by index\n` +
+        `\`${PREFIX}memory list [userId]\` — view memories\n` +
+        (isOwner ? `\`${PREFIX}memory add global <fact>\` — fact about everyone *(owner)*\n` : '')
+      );
+      return;
+    }
+
     // !imagine <prompt>
     if (cmd === 'imagine') {
       if (!rawArgs) {
@@ -491,14 +606,14 @@ client.on(Events.MessageCreate, async message => {
         ? `\n**🔧 Owner**\n` +
           `\`${p}reload\` — Reload persona.json\n` +
           `\`${p}auth add/remove/list <id>\` — Manage who can use the bot\n` +
-          `\`${p}memory add global <fact>\` — Add a fact about everyone\n` +
-          `\`${p}memory add <userId> <fact>\` — Add a fact about a user\n` +
-          `\`${p}memory remove <scope> <index>\` — Delete a memory\n` +
-          `\`${p}memory list [scope]\` — View memories`
+          `\`${p}memory add global <fact>\` — Add a fact about everyone`
         : '';
       await message.reply(
         `**📖 Commands**\n` +
         `\`${p}imagine <prompt>\` — Generate an image 🎨\n` +
+        `\`${p}memory add <@user> <fact>\` — Save a fact about a user 🧠\n` +
+        `\`${p}memory remove <userId> <index>\` — Delete a memory\n` +
+        `\`${p}memory list [userId]\` — View memories\n` +
         `\`${p}logs [last <n>]\` — View recent messages 📋\n` +
         `\`${p}logs search <keyword>\` — Search chat log 🔍\n` +
         `\`${p}ask <question>\` — Ask AI about chat history 🗂️\n` +
@@ -522,7 +637,7 @@ client.on(Events.MessageCreate, async message => {
   await message.channel.sendTyping();
   try {
     const reply = await getAIResponse(message.channelId, userMessage, userId, username);
-    await sendLong(message, reply);
+    await sendLong(message, resolveEmojis(reply));
   } catch (err) {
     console.error('AI error:', err);
     await message.reply(`⚠️ ${err.message}`);
